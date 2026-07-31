@@ -1,0 +1,10 @@
+root = true
+
+[*.{js,json,md,sh,yml,yaml}]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.png]
+insert_final_newline = false

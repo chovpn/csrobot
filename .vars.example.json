@@ -1,0 +1,21 @@
+{
+  "BOT_TOKEN": "ISI_TOKEN_BOTFATHER",
+  "USER_ID": [123456789],
+  "NAMA_STORE": "@NAMA_STORE",
+  "PORT": 6969,
+  "GENERATOR_API_URL": "https://api.zivpn.site/api/config",
+  "GENERATOR_API_KEY": "ISI_API_KEY_GENERATOR",
+  "GENERATOR_API_TIMEOUT_MS": 120000,
+  "GROUP_ID": "",
+  "DATA_QRIS": "",
+  "LOCAL_PAYMENT_API_KEY": "ganti-dengan-random-secret",
+  "PAYMENT_GATEWAY_MODE": "orderkuota",
+  "ORDERKUOTA_CREATE_MODE": "local",
+  "ORKUT_USERNAME": "",
+  "ORKUT_TOKEN": "",
+  "PPOB_ENABLED": false,
+  "DIGIFLAZZ_USERNAME": "",
+  "DIGIFLAZZ_API_KEY": "",
+  "DIGIFLAZZ_BASE_URL": "https://api.digiflazz.com",
+  "PPOB_MARKUP_FEE": 0
+}

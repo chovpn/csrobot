@@ -1,0 +1,16 @@
+node_modules/
+build/
+.vars.json
+.env
+.env.*
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.pid
+*.tmp
+*.bak
+backups/
+logs/
+.pm2/
+.vscode/

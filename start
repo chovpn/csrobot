@@ -1,0 +1,378 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+export TERM="${TERM:-xterm-256color}"
+
+REPO_URL="${BOTVPN_REPO_URL:-https://github.com/harismy/BotVPNOpenSource.git}"
+APP_DIR="${BOTVPN_INSTALL_DIR:-/root/BotVPNOpenSource}"
+PM2_APP_NAME="${BOTVPN_PM2_NAME:-botvpn-standalone}"
+BACKUP_SCRIPT="/root/backup_botvpnopensource.sh"
+DEFAULT_GENERATOR_API_URL="${GENERATOR_API_URL:-https://api.zivpn.site/api/config}"
+
+neutral="\e[0m"
+red="\e[38;5;196m"
+yellow="\e[38;5;226m"
+green="\e[38;5;82m"
+blue="\e[38;5;45m"
+purple="\e[38;5;135m"
+cyan="\e[38;5;87m"
+bold_white="\e[1;37m"
+
+print_line() {
+  echo -e "${purple}====================================================================${neutral}"
+}
+
+print_center() {
+  local text="$1"
+  local width=70
+  local len=${#text}
+  local pad=$(( (width - len) / 2 ))
+  printf "%${pad}s" ""
+  echo -e "${cyan}${text}${neutral}"
+}
+
+show_header() {
+  clear || true
+  print_line
+  print_center "INSTALASI BOTVPN OPENSOURCE"
+  print_line
+  echo -e "${cyan}${bold_white}Fitur utama:${neutral}"
+  echo -e "${cyan}•${neutral} Bot Telegram VPN standalone"
+  echo -e "${cyan}•${neutral} Generate/unlock HC via Generator API private"
+  echo -e "${cyan}•${neutral} Generate/unlock Dark Tunnel via Generator API private"
+  echo -e "${cyan}•${neutral} Create, renew, lock, unlock, delete user"
+  echo -e "${cyan}•${neutral} Payment OrderKuota lokal"
+  echo -e "${cyan}•${neutral} Auto-backup database harian"
+  echo ""
+}
+
+require_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    echo -e "${red}Jalankan sebagai root: sudo bash start sellvpn${neutral}"
+    exit 1
+  fi
+}
+
+run_step() {
+  local message="$1"
+  shift
+  echo -ne "${cyan}• ${message}...${neutral} "
+  "$@"
+  echo -e "${green}OK${neutral}"
+}
+
+input_required() {
+  local prompt="$1"
+  local varname="$2"
+  local secret="${3:-0}"
+  local value=""
+
+  echo ""
+  echo -e "${purple}[ ${bold_white}${prompt}${neutral}${purple} ]${neutral}"
+  while true; do
+    echo -ne "${cyan}> ${neutral}"
+    if [[ "${secret}" == "1" ]]; then
+      read -rs value
+      echo ""
+    else
+      read -r value
+    fi
+    value="$(printf '%s' "${value}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    if [[ -n "${value}" ]]; then
+      printf -v "${varname}" '%s' "${value}"
+      return 0
+    fi
+    echo -e "${red}Input tidak boleh kosong.${neutral}"
+  done
+}
+
+input_optional() {
+  local prompt="$1"
+  local varname="$2"
+  local default_value="${3:-}"
+  local secret="${4:-0}"
+  local value=""
+
+  echo ""
+  if [[ -n "${default_value}" ]]; then
+    echo -e "${purple}[ ${bold_white}${prompt}${neutral}${purple} ] ${yellow}default: ${default_value}${neutral}"
+  else
+    echo -e "${purple}[ ${bold_white}${prompt}${neutral}${purple} ] ${yellow}boleh kosong${neutral}"
+  fi
+  echo -ne "${cyan}> ${neutral}"
+  if [[ "${secret}" == "1" ]]; then
+    read -rs value
+    echo ""
+  else
+    read -r value
+  fi
+  value="$(printf '%s' "${value}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  if [[ -z "${value}" ]]; then
+    value="${default_value}"
+  fi
+  printf -v "${varname}" '%s' "${value}"
+}
+
+repair_dpkg() {
+  dpkg-statoverride --remove /var/spool/exim4 >/dev/null 2>&1 || true
+  dpkg --configure -a >/dev/null 2>&1 || true
+  apt -f install -y >/dev/null 2>&1 || true
+}
+
+install_nodejs() {
+  if command -v node >/dev/null 2>&1; then
+    local major
+    major="$(node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)"
+    if [[ "${major}" -eq 20 ]]; then
+      return 0
+    fi
+    echo -e "${yellow}Node.js versi $(node -v) terdeteksi. Installer akan memakai Node.js 20 LTS agar native sqlite3 kompatibel.${neutral}"
+    apt-get remove -y nodejs >/dev/null 2>&1 || true
+  fi
+
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  apt-get install -y nodejs
+}
+
+setup_bot_source() {
+  timedatectl set-timezone Asia/Jakarta >/dev/null 2>&1 || true
+  repair_dpkg
+
+  run_step "Update package index" apt-get update -y
+  run_step "Install dependency sistem" apt-get install -y ca-certificates curl git cron build-essential python3
+  run_step "Install Node.js 20" install_nodejs
+  run_step "Install PM2" npm install -g pm2
+
+  if [[ -d "${APP_DIR}" ]]; then
+    local backup_dir="${APP_DIR}.bak.$(date +%Y%m%d-%H%M%S)"
+    echo -e "${yellow}Folder lama ditemukan: ${APP_DIR}${neutral}"
+    echo -e "${yellow}Dipindahkan ke: ${backup_dir}${neutral}"
+    mv "${APP_DIR}" "${backup_dir}"
+  fi
+
+  run_step "Clone repo ${REPO_URL}" git clone --depth=1 "${REPO_URL}" "${APP_DIR}"
+  chmod +x "${APP_DIR}/start" "${APP_DIR}/install.sh" 2>/dev/null || true
+}
+
+install_project_dependencies() {
+  cd "${APP_DIR}"
+  run_step "Install dependency npm" npm install --omit=dev --no-audit --no-fund
+  run_step "Rebuild sqlite3 native binding" npm rebuild sqlite3 --build-from-source
+  run_step "Validasi sqlite3" node -e "require('sqlite3'); console.log('sqlite3 OK')"
+
+  if [[ -f package.json ]] && npm run | grep -qE '^[[:space:]]+build'; then
+    run_step "Validasi build" npm run build
+  fi
+}
+
+setup_crontab_backup() {
+  echo ""
+  echo -e "${cyan}Menyiapkan auto-backup database...${neutral}"
+
+  cat >"${BACKUP_SCRIPT}" <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+APP_DIR="${APP_DIR}"
+LOG_FILE="/tmp/botvpn_backup_\$(date +%Y%m%d_%H%M%S).log"
+
+{
+  echo "========================================"
+  echo "Backup started at: \$(date)"
+  echo "App dir: \${APP_DIR}"
+  echo "========================================"
+
+  cd "\${APP_DIR}"
+
+  if [[ ! -f backup.js ]]; then
+    echo "ERROR: backup.js not found"
+    exit 1
+  fi
+
+  if [[ ! -f .vars.json ]]; then
+    echo "ERROR: .vars.json not found"
+    exit 1
+  fi
+
+  node backup.js
+  echo "Backup finished at: \$(date)"
+} >"\${LOG_FILE}" 2>&1
+
+status=\$?
+if [[ "\${status}" -eq 0 ]]; then
+  rm -f "\${LOG_FILE}"
+else
+  echo "Backup failed. Log: \${LOG_FILE}"
+fi
+exit "\${status}"
+EOF
+
+  chmod +x "${BACKUP_SCRIPT}"
+
+  local tmp_cron
+  tmp_cron="$(mktemp)"
+  crontab -l 2>/dev/null | grep -v "${BACKUP_SCRIPT}" | grep -v "BOTVPN OPENSOURCE AUTO BACKUP" >"${tmp_cron}" || true
+
+  {
+    echo ""
+    echo "# BOTVPN OPENSOURCE AUTO BACKUP"
+    echo "0 2 * * * ${BACKUP_SCRIPT} > /dev/null 2>&1"
+    echo "0 4 1 * * find ${APP_DIR}/backups -name '*.db' -mtime +30 -delete 2>/dev/null"
+  } >>"${tmp_cron}"
+
+  crontab "${tmp_cron}"
+  rm -f "${tmp_cron}"
+
+  systemctl enable --now cron >/dev/null 2>&1 || service cron start >/dev/null 2>&1 || true
+
+  mkdir -p "${APP_DIR}/backups"
+  echo -e "${green}Auto-backup aktif: setiap hari jam 02:00 WIB${neutral}"
+}
+
+write_vars_json() {
+  local payment_key="${local_payment_api_key:-}"
+
+  BOT_TOKEN="${bot_token}" \
+  ADMIN_ID="${admin_id}" \
+  STORE_NAME="${store_name}" \
+  GROUP_ID_INPUT="${group_id}" \
+  DATA_QRIS_INPUT="${data_qris}" \
+  ORKUT_USERNAME_INPUT="${orkut_username}" \
+  ORKUT_TOKEN_INPUT="${orkut_token}" \
+  LOCAL_PAYMENT_API_KEY_INPUT="${payment_key}" \
+  GENERATOR_API_URL_INPUT="${generator_api_url}" \
+  GENERATOR_API_KEY_INPUT="${generator_api_key}" \
+  node <<'NODE'
+const fs = require('fs');
+const crypto = require('crypto');
+
+function asAdminId(value) {
+  const id = Number(String(value || '').trim());
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    throw new Error('Admin ID tidak valid.');
+  }
+  return id;
+}
+
+function normalizeUrl(raw) {
+  const text = String(raw || '').trim() || 'https://api.zivpn.site/api/config';
+  const withScheme = /^https?:\/\//i.test(text) ? text : `https://${text}`;
+  const url = new URL(withScheme);
+  let pathname = url.pathname.replace(/\/+$/, '');
+  if (/\/docs$/i.test(pathname)) pathname = pathname.replace(/\/docs$/i, '');
+  if (!/\/api\/config$/i.test(pathname)) pathname = `${pathname}/api/config`;
+  url.pathname = pathname.replace(/\/{2,}/g, '/');
+  url.search = '';
+  url.hash = '';
+  return url.toString().replace(/\/+$/, '');
+}
+
+const config = {
+  BOT_TOKEN: String(process.env.BOT_TOKEN || '').trim(),
+  USER_ID: [asAdminId(process.env.ADMIN_ID)],
+  NAMA_STORE: String(process.env.STORE_NAME || '@NAMA_STORE').trim(),
+  PORT: 6969,
+  GENERATOR_API_URL: normalizeUrl(process.env.GENERATOR_API_URL_INPUT),
+  GENERATOR_API_KEY: String(process.env.GENERATOR_API_KEY_INPUT || '').trim(),
+  GENERATOR_API_TIMEOUT_MS: 120000,
+  GROUP_ID: String(process.env.GROUP_ID_INPUT || '').trim(),
+  DATA_QRIS: String(process.env.DATA_QRIS_INPUT || '').trim(),
+  LOCAL_PAYMENT_API_KEY: String(process.env.LOCAL_PAYMENT_API_KEY_INPUT || '').trim() || crypto.randomBytes(24).toString('hex'),
+  PAYMENT_GATEWAY_MODE: 'orderkuota',
+  ORDERKUOTA_CREATE_MODE: 'local',
+  ORKUT_USERNAME: String(process.env.ORKUT_USERNAME_INPUT || '').trim(),
+  ORKUT_TOKEN: String(process.env.ORKUT_TOKEN_INPUT || '').trim(),
+  PPOB_ENABLED: false,
+  DIGIFLAZZ_USERNAME: '',
+  DIGIFLAZZ_API_KEY: '',
+  DIGIFLAZZ_BASE_URL: 'https://api.digiflazz.com',
+  PPOB_MARKUP_FEE: 0
+};
+
+if (!config.BOT_TOKEN) throw new Error('BOT_TOKEN kosong.');
+if (!config.GENERATOR_API_KEY) throw new Error('GENERATOR_API_KEY kosong.');
+
+fs.writeFileSync('.vars.json', `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+NODE
+}
+
+start_pm2() {
+  cd "${APP_DIR}"
+  pm2 update >/dev/null 2>&1 || true
+  pm2 delete "${PM2_APP_NAME}" >/dev/null 2>&1 || true
+  if [[ -f ecosystem.config.js ]]; then
+    pm2 start ecosystem.config.js --update-env
+  else
+    pm2 start app.js --name "${PM2_APP_NAME}" --update-env
+  fi
+  pm2 save
+  pm2 startup systemd -u root --hp /root >/dev/null 2>&1 || true
+}
+
+cek_status() {
+  pm2 status "${PM2_APP_NAME}" 2>/dev/null | grep -q "online" && echo "aktif" || echo "cek dengan pm2 status"
+}
+
+server_app() {
+  show_header
+
+  input_required "Masukkan Token Bot dari BotFather" bot_token 1
+  input_required "Masukkan Admin ID Telegram" admin_id
+  input_required "Masukkan Nama Store" store_name
+  input_required "Masukkan Generator API Key" generator_api_key 1
+  input_optional "Masukkan Generator API URL" generator_api_url "${DEFAULT_GENERATOR_API_URL}"
+  input_optional "Masukkan Data QRIS" data_qris
+  input_optional "Masukkan ID Group Notif" group_id
+  input_optional "Masukkan ORKUT Username" orkut_username
+  input_optional "Masukkan ORKUT Token" orkut_token  "" 1
+  input_optional "Masukkan API Key Endpoint Lokal" local_payment_api_key
+
+  cd "${APP_DIR}"
+  write_vars_json
+  echo -e "${green}.vars.json berhasil dibuat di ${APP_DIR}/.vars.json${neutral}"
+  install_project_dependencies
+  setup_crontab_backup
+
+  echo ""
+  echo -e "${cyan}Menjalankan bot dengan PM2...${neutral}"
+  start_pm2
+
+  echo ""
+  print_line
+  print_center "BOTVPN OPENSOURCE BERHASIL DIINSTAL"
+  print_line
+  echo ""
+  echo -e " Repo            : ${green}${REPO_URL}${neutral}"
+  echo -e " Folder          : ${green}${APP_DIR}${neutral}"
+  echo -e " Status Bot      : ${green}$(cek_status)${neutral}"
+  echo -e " PM2 Name        : ${green}${PM2_APP_NAME}${neutral}"
+  echo -e " Backup Schedule : ${green}Daily 02:00 WIB${neutral}"
+  echo -e " Backup Script   : ${green}${BACKUP_SCRIPT}${neutral}"
+  echo ""
+  echo -e "${yellow}Command berguna:${neutral}"
+  echo -e " ${cyan}•${neutral} pm2 status ${PM2_APP_NAME}"
+  echo -e " ${cyan}•${neutral} pm2 logs ${PM2_APP_NAME}"
+  echo -e " ${cyan}•${neutral} pm2 restart ${PM2_APP_NAME}"
+  echo -e " ${cyan}•${neutral} ${BACKUP_SCRIPT}"
+  echo ""
+  echo -e "Jalankan di Telegram: ${bold_white}/start${neutral}"
+  echo ""
+}
+
+main() {
+  require_root
+
+  case "${1:-}" in
+    sellvpn|opensource|botvpn)
+      setup_bot_source
+      server_app
+      ;;
+    *)
+      echo -e "${red}Gunakan perintah:${neutral} ${yellow}bash start sellvpn${neutral}"
+      echo -e "${yellow}Opsional:${neutral} BOTVPN_REPO_URL=${REPO_URL} BOTVPN_INSTALL_DIR=${APP_DIR} bash start sellvpn"
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
