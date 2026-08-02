@@ -8007,30 +8007,33 @@ async function sendMainMenu(ctx) {
   // Susun semua tombol menu utama sebagai daftar flat dulu, baru dirapikan 2 tombol per baris.
   // Urutan sengaja disusun biar tiap pasangan dalam 1 baris panjang teksnya mirip (gak ada yg nonjol).
   let menuButtons = [
-    { text: 'Menu VPN', callback_data: 'menu_vpn' },
-    { text: 'Menu PPOB', callback_data: 'ppob_menu' },
-    { text: 'Tools', callback_data: 'menu_tools' },
-    { text: 'Admin', callback_data: 'hubungi_admin' }
+    { text: 'Menu VPN', callback_data: 'menu_vpn', type: 'primary' },
+    { text: 'Menu PPOB', callback_data: 'ppob_menu', type: 'primary' },
+    { text: 'Tools', callback_data: 'menu_tools', type: 'success' },
+    { text: 'Admin', callback_data: 'hubungi_admin', type: 'success' }
   ];
 
   if (MAIN_MENU_TUTORIAL_ENABLED) {
     menuButtons.push({ text: 'Tutorial', callback_data: 'tutorial_bot' });
   }
 
-  menuButtons.push({ text: 'Statistik', callback_data: 'global_stats_detail' });
+  menuButtons.push({ text: 'Statistik', callback_data: 'global_stats_detail', type: 'primary' });
 
   if (loadScNexusMenuSetting()) {
     menuButtons.push({ text: 'SC Nexus', url: 'https://t.me/sc1forcrnexusbot' });
   }
 
   if (loadTopupAutoSetting()) {
-    menuButtons.push({ text: 'TopUp Auto', callback_data: 'topup_saldo' });
+    menuButtons.push({ text: 'TopUp Auto', callback_data: 'topup_saldo', type: 'primary' });
   }
   if (loadTopupManualSetting()) {
     menuButtons.push({ text: 'TopUp QRIS', callback_data: 'topup_manual' });
   }
 
-  menuButtons.push({ text: 'Join Reseller', callback_data: 'jadi_reseller' });
+  menuButtons.push({ text: 'Join Reseller', callback_data: 'jadi_reseller', type: 'danger' });
+
+  // Bot API 9.4+ pakai field "style" (bukan "type") buat warna tombol: primary/success/danger.
+  menuButtons = menuButtons.map(({ type, ...btn }) => (type ? { ...btn, style: type } : btn));
 
   // Rapikan jadi baris berisi 2 tombol; sisa ganjil (kalau ada) jadi baris terakhir sendiri.
   let keyboard = [];
