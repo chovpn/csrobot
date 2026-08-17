@@ -1,4 +1,9 @@
 node_modules/
+.npm/
+.cache/
+.config/
+go/
+
 .vars.json
 .env
 .env.*
@@ -21,7 +26,22 @@ logs/
 tmp/
 temp/
 .pm2/
+.git_backup/
+.ssh/
 .vscode/
+
+.bash_history
+.bashrc
+.gitconfig
+.lesshst
+.profile
+.wget-hsts
+
+BotVPNOpenSource/
+BotVPNOpenSource.bak.*
+backup_*.sh
+exec_recipe.log
+recipe_*.log
 
 *.hc
 *.hc.txt
