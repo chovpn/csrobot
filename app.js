@@ -20439,6 +20439,7 @@ if (state.action === 'create' && normalizeCreatePriceMode(state.priceMode) === '
             return ctx.reply('❌ *Terjadi kesalahan saat memproses saldo. Silakan coba lagi.*', { parse_mode: 'Markdown' });
           }
 
+          try {
           if (action === 'create') {
             const telegramUserId = String(ctx.from?.id || '');
             const telegramChatId = String(ctx.chat?.id || '');
@@ -20656,6 +20657,27 @@ const msgToUser = action === 'create'
   : msg;
 await ctx.reply(msgToUser, { parse_mode: 'Markdown' });
 delete userState[ctx.chat.id];
+          } catch (fatalErr) {
+            // Tangkap error yang muncul SETELAH request ke VPS (create/renew) terkirim.
+            // Tanpa try/catch ini, error di sini jadi unhandled rejection: proses VPS
+            // sudah sukses (akun ke-renew), tapi bot tidak pernah reply ke user.
+            logger.error(`❌ Fatal error saat proses ${action} untuk user ${ctx.from.id}, type: ${type}, server: ${serverId}: ${fatalErr.message}\n${fatalErr.stack}`);
+            try {
+              if (reserveResult && reserveResult.ok && !finalizeResult?.ok) {
+                await cancelReservedAccountCharge(ctx.from.id, totalHarga, reserveResult.referenceId).catch(() => {});
+              }
+            } catch (rollbackErr) {
+              logger.error(`❌ Gagal rollback setelah fatal error: ${rollbackErr.message}`);
+            }
+            const vpsProbablyDone = typeof msg !== 'undefined' && msg;
+            await ctx.reply(
+              vpsProbablyDone
+                ? '⚠️ *Proses di server VPN kemungkinan sudah berhasil, tapi bot gagal menyelesaikan pencatatan/notifikasi.*\nSilakan cek akun kamu di menu "Lihat Akun Saya", atau hubungi admin jika saldo/akun tidak sesuai.'
+                : '❌ *Terjadi kesalahan saat memproses permintaan. Silakan coba lagi atau hubungi admin.*',
+              { parse_mode: 'Markdown' }
+            ).catch(() => {});
+            delete userState[ctx.chat.id];
+          }
 //SALDO DATABES
           });
         });
@@ -25121,6 +25143,18 @@ async function sendAutoBackup(filePath, preferredAdminId = null) {
     });
   }
 }
+
+// Safety net: cegah proses PM2 crash/restart gara-gara unhandled rejection
+// di dalam callback db.get/db.all (async callback yang tidak di-await siapa pun).
+// bot.catch() Telegraf TIDAK menangkap error jenis ini karena terjadi di luar
+// promise chain middleware. Tanpa ini, satu error kecil di satu menu bisa
+// bikin seluruh bot restart dan menu lain (mis. cek akun saya) ikut "diam".
+process.on('unhandledRejection', (reason) => {
+  logger.error(`❌ Unhandled Rejection: ${reason && reason.stack ? reason.stack : reason}`);
+});
+process.on('uncaughtException', (err) => {
+  logger.error(`❌ Uncaught Exception: ${err.stack || err.message}`);
+});
 
 // Tambahkan error handler untuk bot
 bot.catch((err, ctx) => {

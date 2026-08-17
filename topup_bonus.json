@@ -1,6 +1,6 @@
 {
   "enabled": true,
   "range_10_40": 5,
-  "range_50_70": 10,
-  "range_70_100": 15
+  "range_50_70": 15,
+  "range_70_100": 20
 }
