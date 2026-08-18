@@ -20367,6 +20367,7 @@ if (state.action === 'create' && normalizeCreatePriceMode(state.priceMode) === '
       const { username, password, quota, iplimit, serverId, type, action } = state;
       let usedPassword = password || '';
       let msg;
+      let finalizeResult = null;
 
       db.get('SELECT * FROM Server WHERE id = ?', [serverId], async (err, server) => {
         if (err) {
@@ -20545,7 +20546,7 @@ if (shouldRollback) {
   return ctx.reply(msg, { parse_mode: 'Markdown' });
 }
 // kalau sampai sini artinya tidak ada error, lanjut finalisasi saldo + transaksi (atomic)
-const finalizeResult = await finalizeReservedAccountCharge(reserveResult.referenceId, type);
+finalizeResult = await finalizeReservedAccountCharge(reserveResult.referenceId, type);
 if (!finalizeResult.ok) {
   logger.error(`Finalisasi transaksi gagal untuk user ${ctx.from.id}, type: ${type}, server: ${serverId}, ref: ${reserveResult.referenceId}, err: ${finalizeResult.error}`);
   await ctx.reply(
